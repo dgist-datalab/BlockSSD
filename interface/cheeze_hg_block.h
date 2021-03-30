@@ -14,7 +14,16 @@
 #include <time.h>
 #include "../include/container.h"
 
+#define barrier() __asm__ __volatile__("": : :"memory")
+
 struct cheeze_req_user {
+    int id; 
+    int op; 
+    unsigned int pos; // sector_t but divided by 4096
+    unsigned int len;
+} __attribute__((aligned(8), packed));
+
+struct cheeze_trace_req_user {
     int id; 
     int op; 
     unsigned int pos; // sector_t but divided by 4096
@@ -76,10 +85,15 @@ enum req_opf {
 };
 
 typedef struct cheeze_req_user cheeze_ureq;
+typedef struct cheeze_trace_req_user cheeze_trace_ureq;
 
 
 void init_cheeze(uint64_t phy_addr);
+void init_trace_cheeze();
 void free_cheeze();
-vec_request *get_vectored_request();
+void free_trace_cheeze();
+vec_request **get_vectored_request_arr();
+//vec_request *get_vectored_request();
+vec_request *get_trace_vectored_request();
 
 #endif

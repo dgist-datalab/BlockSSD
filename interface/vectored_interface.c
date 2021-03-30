@@ -108,6 +108,7 @@ void assign_vectored_req(vec_request *txn){
 			}
 			pthread_mutex_unlock(&flying_cnt_lock);
 		}
+	//	printf("flying tagnum %u, txn->size %u, req_q->size:%u\n", QDEPTH-flying_cnt, txn->size, mp.processors[0].req_q->size);
 		
 		if(q_enqueue((void*)txn, mp.processors[0].req_q)){
 			break;

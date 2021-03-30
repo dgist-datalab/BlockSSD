@@ -12,6 +12,8 @@ typedef struct align_buffer{
 	KEYT key[L2PGAP];
 }align_buffer;
 
+
+
 uint32_t page_create (lower_info*,blockmanager *, algorithm *);
 void page_destroy (lower_info*,  algorithm *);
 uint32_t page_argument(int argc, char **argv);

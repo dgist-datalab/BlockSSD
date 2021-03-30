@@ -16,7 +16,8 @@ void invalidate_ppa(uint32_t t_ppa){
 void validate_ppa(uint32_t ppa, KEYT *lbas){
 	/*when the ppa is validated this function must be called*/
 	for(uint32_t i=0; i<L2PGAP; i++){
-		page_ftl.bm->populate_bit(page_ftl.bm,ppa * L2PGAP+i);
+		if(lbas[i]!=UINT32_MAX)
+			page_ftl.bm->populate_bit(page_ftl.bm,ppa * L2PGAP+i);
 	}
 
 	/*this function is used for write some data to OOB(spare area) for reverse mapping*/
@@ -151,14 +152,16 @@ void do_gc(){
 	li_node *now,*nxt;
 	g_buffer.idx=0;
 	KEYT *lbas;
+	uint32_t test_valid_obj=0;
 	while(temp_list->size){
 		for_each_list_node_safe(temp_list,now,nxt){
-
 			gv=(gc_value*)now->data;
 			if(!gv->isdone) continue;
 			lbas=(KEYT*)bm->get_oob(bm, gv->ppa);
+
 			for(uint32_t i=0; i<L2PGAP; i++){
 				if(bm->is_invalid_page(bm,gv->ppa*L2PGAP+i)) continue;
+				test_valid_obj++;
 				memcpy(&g_buffer.value[g_buffer.idx*4096],&gv->value->value[i*4096],4096);
 				g_buffer.key[g_buffer.idx]=lbas[i];
 
@@ -180,11 +183,17 @@ void do_gc(){
 	}
 
 	if(g_buffer.idx!=0){
+		if(g_buffer.idx==1){
+			g_buffer.key[g_buffer.idx]=UINT32_MAX;
+		}
 		uint32_t res=page_map_gc_update(g_buffer.key, g_buffer.idx);
 		validate_ppa(res, g_buffer.key);
 		send_req(res, GCDW, inf_get_valueset(g_buffer.value, FS_MALLOC_W, PAGESIZE));
 		g_buffer.idx=0;	
 	}
+	//static int cnt=0;
+	//printf("gc_cnt:%d\n", cnt++);
+	//printf("test_valid obj :%u bytes:%u pages:%u valid_lba_num:%u\n", test_valid_obj, test_valid_obj*4096, test_valid_obj/2, p->valid_lba_num);
 
 	bm->trim_segment(bm,target,page_ftl.li); //erase a block
 

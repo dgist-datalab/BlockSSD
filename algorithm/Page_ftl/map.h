@@ -9,6 +9,7 @@ typedef struct page_map_body{
 	/*segment is a kind of Physical Block*/
 	__segment *reserve; //for gc
 	__segment *active; //for gc
+	uint32_t valid_lba_num;
 }pm_body;
 
 

@@ -41,6 +41,7 @@ typedef struct vectored_request{
 	uint32_t done_cnt;
 	uint32_t tid;
 	char* buf;
+
 	request *req_array;
 	uint32_t mark;
 	void* (*end_req)(void*);
@@ -56,6 +57,7 @@ struct request {
 	uint32_t length;
 	char *buf;
 	
+	uint32_t crc_value;
 	uint64_t ppa;/*it can be the iter_idx*/
 	uint32_t seq;
 #ifdef hash_dftl
@@ -154,6 +156,9 @@ struct lower_info {
 	uint64_t all_pages_in_dev;//for scale up test
 
 	uint64_t req_type_cnt[LREQ_TYPE_NUM];
+	uint64_t read_overlapped;
+    uint64_t write_overlapped;
+
 	//anything
 };
 

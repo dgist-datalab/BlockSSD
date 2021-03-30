@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <getopt.h>
+#include <signal.h>
 #include "../include/lsm_settings.h"
 #include "../include/FS.h"
 #include "../include/settings.h"
@@ -25,16 +26,29 @@ extern int seq_padding_opt;
 MeasureTime write_opt_time[11];
 extern master_processor mp;
 extern uint64_t cumulative_type_cnt[LREQ_TYPE_NUM];
+void log_lower_print(int sig){
+    printf("-------------lower print!!!!-------------\n");
+    inf_lower_log_print();
+    printf("-------------lower print end-------------\n");
+}
 int main(int argc,char* argv[]){
 	//int temp_cnt=bench_set_params(argc,argv,temp_argv);
+
+    struct sigaction sa2;
+    sa2.sa_handler = log_lower_print;
+    sigaction(SIGUSR1, &sa2, NULL);
+
+	//while(1){}
+
 	inf_init(0,0,argc,argv);
 	bench_init();
 	bench_vectored_configure();
 	//bench_add(VECTOREDRSET,0,RANGE,RANGE);
-	bench_add(VECTOREDRW,0,RANGE,RANGE*2);
+	//bench_add(VECTOREDSSET,0,RANGE,RANGE);
+	//bench_add(VECTOREDRSET,0,RANGE,RANGE*4);
 	//bench_add(VECTOREDRGET,0,RANGE/100*99,RANGE/100*99);
 	printf("range: %lu!\n",RANGE);
-	//bench_add(VECTOREDRW,0,RANGE,RANGE*2);
+	bench_add(VECTOREDRW,0,RANGE,RANGE*2);
 
 
 	char *value;

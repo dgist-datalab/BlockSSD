@@ -78,13 +78,16 @@ uint32_t page_read(request *const req){
 	}
 	else{
 		req->value->ppa=page_map_pick(req->key);
-
+		if(req->key==28895274){
+			printf("\t\tmap info : %u->%u\n", req->key, req->value->ppa);
+		}
 		DPRINTF("\t\tmap info : %u->%u\n", req->key, req->value->ppa);
 		if(req->value->ppa==UINT32_MAX){
 			req->type=FS_NOTFOUND_T;
 			req->end_req(req);
 		}
 		else{
+			//printf("read_ppa:%u\n", req->value->ppa/L2PGAP);
 			send_user_req(req, DATAR, req->value->ppa/L2PGAP, req->value);
 		}
 	}

@@ -84,6 +84,8 @@ vec_request *get_vectored_request(){
 	if(!isstart){
 		isstart=true;
 		printf("now waiting req!!\n");
+		fsync(1);
+		fsync(2);
 	}
 	ssize_t r=read(chrfd, creq, sizeof(cheeze_req));
 	if(r<0){

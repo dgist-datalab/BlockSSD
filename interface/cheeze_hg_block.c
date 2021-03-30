@@ -9,9 +9,9 @@
 
 extern master_processor mp;
 
-#define barrier() __asm__ __volatile__("": : :"memory")
-
 #define TOTAL_SIZE (3ULL *1024L *1024L *1024L)
+#define TRACE_DEV_SIZE (128ULL * 1024L * 1024L * 1024L)
+#define CRC_BUFSIZE (2ULL * 1024L * 1024L)
 
 static uint64_t PHYS_ADDR=0x3800000000;
 static void *page_addr;
@@ -21,6 +21,9 @@ static uint64_t *seq_addr; // 8KB
 struct cheeze_req_user *ureq_addr; // sizeof(req) * 1024
 static char *data_addr[2]; // page_addr[1]: 1GB, page_addr[2]: 1GB
 static uint64_t seq = 0;
+static int trace_fd = 0;
+static uint32_t trace_crc[TRACE_DEV_SIZE/LPAGESIZE];
+static uint32_t trace_crc_buf[CRC_BUFSIZE];
 
 static inline char *get_buf_addr(char **pdata_addr, int id) {
     int idx = id / ITEMS_PER_HP;
@@ -47,6 +50,18 @@ char *null_value;
 #ifdef CHECKINGDATA
 uint32_t* CRCMAP;
 #endif
+#define TRACE_TARGET "/trace"
+void init_trace_cheeze(){
+	trace_fd = open(TRACE_TARGET, O_RDONLY);
+	if (trace_fd < 0) {
+		perror("Failed to open " TRACE_TARGET);
+		abort();
+		return;
+	}
+
+	null_value = (char*)malloc(PAGESIZE);
+	memset(null_value, 0, PAGESIZE);
+}
 
 void init_cheeze(uint64_t phy_addr){
 	int chrfd = open("/dev/mem", O_RDWR);
@@ -133,7 +148,12 @@ static inline vec_request *ch_ureq2vec_req(cheeze_ureq *creq, int id){
 		res->buf=NULL;
 	}
 	else{
-		res->buf=get_buf_addr(data_addr, id);
+		if(trace_fd){
+			res->buf=NULL;	
+		}
+		else{
+			res->buf=get_buf_addr(data_addr, id);
+		}
 	}
 
 
@@ -153,13 +173,26 @@ static inline vec_request *ch_ureq2vec_req(cheeze_ureq *creq, int id){
 		switch(type){
 			case FS_GET_T:
 				temp->value=inf_get_valueset(NULL, FS_MALLOC_R, PAGESIZE);
+				if(trace_fd)
+					memcpy(&temp->crc_value, trace_crc_buf + i, sizeof(uint32_t));
 				break;
 			case FS_SET_T:
-				temp->value=inf_get_valueset(&res->buf[LPAGESIZE*i],FS_MALLOC_W,LPAGESIZE);
+				if(trace_fd){
+					/*crc map*/
+					//memcpy(trace_crc + (creq->pos + i), trace_crc_buf + i, sizeof(uint32_t));
+					temp->value=inf_get_valueset(NULL, FS_MALLOC_W, LPAGESIZE);
+					memcpy(&temp->crc_value, trace_crc_buf + i, sizeof(uint32_t));
+					memcpy(temp->value->value, trace_crc_buf + i, sizeof(uint32_t));
+				}else{
+					temp->value=inf_get_valueset(&res->buf[LPAGESIZE*i],FS_MALLOC_W,LPAGESIZE);
+				}
 				break;	
 			case FS_FLUSH_T:
 				break;
 			case FS_DELETE_T:
+				/*clear crc map*/
+				if (trace_fd)
+					memset(trace_crc + (creq->pos + i), 0, sizeof(uint32_t));
 				break;
 			default:
 				printf("error type!\n");
@@ -167,6 +200,9 @@ static inline vec_request *ch_ureq2vec_req(cheeze_ureq *creq, int id){
 				break;
 		}
 		temp->key=creq->pos+i;
+		if(temp->key==28895274){	
+			printf("start REQ-TYPE:%s INFO(%d:%d) LBA: %u crc:%u\n", type_to_str(temp->type),creq->id, i, temp->key, temp->crc_value);
+		}
 
 #ifdef CHECKINGDATA
 		if(temp->type==FS_SET_T){
@@ -181,42 +217,110 @@ static inline vec_request *ch_ureq2vec_req(cheeze_ureq *creq, int id){
 	return res;
 }
 
-vec_request *get_vectored_request(){
+//extern int MS_TIME_SL;
+//#define MS_TIME_SL 7
+//set to time!!
+//#define SLICE (32 * 1024)
+vec_request **get_vectored_request_arr()
+{
+	static bool isstart = false;
+	if (!isstart) {
+		isstart = true;
+		printf("now waiting req!!\n");
+	}
+	cheeze_ureq *ureq;
+	vec_request **res = NULL;
+	volatile uint8_t *send, *recv;
+	bool check[CHEEZE_QUEUE_SIZE] = { 0, };
+	int id;
+	int check_idx = 0;
+	int pre_i;
+	uint32_t total_size = 0;
+
+ retry:
+	check_idx = 0;
+	total_size = 0;
+	memset(check, 0, sizeof(check));
+	for (pre_i = 0; pre_i < CHEEZE_QUEUE_SIZE; pre_i++) {
+		send = &send_event_addr[pre_i];
+		if (*send) {
+			id = pre_i;
+			check[pre_i] = true;
+			check_idx++;
+			ureq = ureq_addr + id;
+			total_size += ureq->len;
+		}
+	}
+	if (!check_idx)
+		goto retry;
+
+#if 0
+	uint32_t tmp = total_size / SLICE * MS_TIME_SL;
+	if (!tmp)
+		tmp = 1;
+	static int debug_cnt = 0;
+	if (++debug_cnt % 100000 == 0) {
+		printf("tmp:%u\n", tmp);
+	}
+	usleep(tmp);
+#endif
+
+	int req_idx = 0;
+	res = (vec_request **) malloc(sizeof(vec_request *) * (check_idx + 1));
+	for (int i = 0; i < CHEEZE_QUEUE_SIZE; i++) {
+		if (!check[i])
+			continue;
+		send = &send_event_addr[i];
+		recv = &recv_event_addr[i];
+		id = i;
+		ureq = ureq_addr + id;
+		res[req_idx++] = ch_ureq2vec_req(ureq, id);
+		barrier();
+		*send = 0;
+		if (ureq->op!=REQ_OP_READ) {
+			barrier();
+			*recv = 1;
+		}
+	}
+	res[req_idx] = NULL;
+	return res;
+}
+
+vec_request *get_trace_vectored_request(){
 	static bool isstart=false;
+	unsigned int crc_len;
+
 	
 	if(!isstart){
 		isstart=true;
 		printf("now waiting req!!\n");
+		fsync(1);
+		fsync(2);
 	}
 
-	cheeze_ureq *ureq;
+	cheeze_ureq ureq;
 	vec_request *res=NULL;
-	uint8_t *send, *recv;
-	int id;
+	int id=0;
+	static int cnt=1;
 	while(1){
-		for (int i = 0; i < CHEEZE_QUEUE_SIZE; i++) {
-			send = &send_event_addr[i];
-			recv = &recv_event_addr[i];
-			if (*send) {
-				id = i;
-				// printf("id: %d (i: %d, j: %d), seq_addr[id]: %lu, seq: %lu\n", id, i, j, seq_addr[id], seq);
-				// ureq_print(ureq);
-				if (seq_addr[id] == seq) {
-					ureq = ureq_addr + id; 
-					res=ch_ureq2vec_req(ureq, id);
-					barrier();
-					*send = 0;
-					if(ureq->op!=REQ_OP_READ){
-						barrier();
-						*recv = 1;
-					}
-					seq++;
-					return res;
-				} else {
-					continue;
-				}
-			}
+		uint32_t len=0;
+		len=read(trace_fd, &ureq, sizeof(ureq));
+		if(len!=sizeof(ureq)){
+			printf("read error!!: len:%u\n", len);
+			abort();
 		}
+		crc_len = ureq.len/LPAGESIZE * sizeof(uint32_t);
+		len=read(trace_fd, trace_crc_buf, crc_len);
+		if(len!=crc_len){
+			printf("read error!!: len:%u, crc_len:%u\n", len, crc_len);
+			abort();
+		}
+		res=ch_ureq2vec_req(&ureq, id);
+		cnt++;
+		if(cnt%10000==0){
+			printf("%u\n",cnt);
+		}
+		return res;
 	}
 
 	return res;
@@ -224,8 +328,17 @@ vec_request *get_vectored_request(){
 
 bool cheeze_end_req(request *const req){
 	vectored_request *preq=req->parents;
+	if(req->key==28895274){	
+		printf("end REQ-TYPE:%s INFO(%d:%d) LBA: %u req->crc:%u\n", type_to_str(req->type), 0,0, req->key, req->crc_value);
+	}
 	switch(req->type){
 		case FS_NOTFOUND_T:
+
+			/*crc map check for not found check!! by crc*/
+			if (trace_fd && (trace_crc[req->key] != 0) ) {
+				printf("[ERROR] NOTFOUND - key:%u, origin crc: %u\n", req->key, trace_crc[req->key]);	
+				abort();
+			}
 			bench_reap_data(req, mp.li);
 			DPRINTF("%u not found!\n",req->key);
 #ifdef CHECKINGDATA
@@ -235,13 +348,29 @@ bool cheeze_end_req(request *const req){
 				printf("\n");		
 			}
 #endif
-			memcpy(&preq->buf[req->seq*LPAGESIZE], null_value,LPAGESIZE);
+			if(preq->buf){
+				memcpy(&preq->buf[req->seq*LPAGESIZE], null_value,LPAGESIZE);
+			}
 			inf_free_valueset(req->value,FS_MALLOC_R);
 			break;
 		case FS_GET_T:
+			/*crc map check!! by crc*/
+			if(trace_fd && req->key==28895274){
+				printf("%u crc value:%u\n", req->key, *(uint32_t*)req->value->value);
+			}
+			if (trace_fd && trace_crc[req->key] != 0) {
+				uint32_t crc_result = *((uint32_t *)req->value->value);
+				if (crc_result != trace_crc[req->key]) {
+					printf("[ERROR] FOUND - key:%u, origin crc: %u, result crc: %u\n", req->key, trace_crc[req->key], crc_result);
+					abort();
+				}
+			}
 			bench_reap_data(req, mp.li);
 			if(req->value){
-				memcpy(&preq->buf[req->seq*LPAGESIZE], req->value->value,LPAGESIZE);
+
+				if(preq->buf){
+					memcpy(&preq->buf[req->seq*LPAGESIZE], req->value->value,LPAGESIZE);
+				}
 #ifdef CHECKINGDATA
 				if(CRCMAP[req->key]!=crc32(&preq->buf[req->seq*LPAGESIZE], LPAGESIZE)){
 					printf("\n");
@@ -253,6 +382,9 @@ bool cheeze_end_req(request *const req){
 			}
 			break;
 		case FS_SET_T:
+			//memcpy(trace_crc + req->key, req->crc, sizeof(uint32_t));
+			if (trace_fd)
+				trace_crc[req->key] = req->crc_value;
 			bench_reap_data(req, mp.li);
 			if(req->value) inf_free_valueset(req->value, FS_MALLOC_W);
 			break;
@@ -266,9 +398,10 @@ bool cheeze_end_req(request *const req){
 	release_each_req(req);
 
 	if(preq->size==preq->done_cnt){
-		if(req->type==FS_GET_T || req->type==FS_NOTFOUND_T){
-			barrier();
-			recv_event_addr[preq->tag_id]=1;		
+		if(!trace_fd){
+			if(req->type==FS_GET_T || req->type==FS_NOTFOUND_T){
+				recv_event_addr[preq->tag_id]=1;		
+			}
 		}
 		free(preq->req_array);
 		free(preq);
@@ -281,5 +414,14 @@ void free_cheeze(){
 #ifdef CHECKINGDATA
 	free(CRCMAP);
 #endif
+	return;
+}
+
+void free_trace_cheeze(){
+#ifdef CHECKINGDATA
+	free(CRCMAP);
+#endif
+	free(null_value);
+	close(trace_fd);
 	return;
 }

@@ -25,13 +25,23 @@ void log_print(int sig){
 }
 
 void * thread_test(void *){
-	vec_request *req=NULL;
-	while((req=get_vectored_request())){
-		assign_vectored_req(req);
+	vec_request **req_arr=NULL;
+	while((req_arr=get_vectored_request_arr())){
+		for(int i=0; req_arr[i]!=NULL; i++){
+			assign_vectored_req(req_arr[i]);
+		}
+		free(req_arr);
 	}
 	return NULL;
 }
 
+void log_lower_print(int sig){
+    printf("-------------lower print!!!!-------------\n");
+    inf_lower_log_print();
+    printf("-------------lower print end-------------\n");
+}
+
+//int MS_TIME_SL;
 pthread_t thr; 
 int main(int argc,char* argv[]){
 	struct sigaction sa;
@@ -40,6 +50,14 @@ int main(int argc,char* argv[]){
 	sa.sa_handler = log_print;
 	sigaction(SIGINT, &sa, NULL);
 	printf("signal add!\n");
+
+//	MS_TIME_SL = atoi(getenv("MS_TIME_SL"));
+//	printf("Using MS_TIME_SL of %d\n", MS_TIME_SL);
+
+    struct sigaction sa2;
+    sa2.sa_handler = log_lower_print;
+    sigaction(SIGUSR1, &sa2, NULL);
+
 
 	inf_init(1,0,argc,argv);
 

@@ -344,11 +344,7 @@ void *posix_trim_block(uint32_t _PPA, bool async){
 	
 	my_posix.req_type_cnt[TRIM]++;
 	for(uint32_t i=PPA; i<PPA+my_posix.PPS; i++){
-#ifdef SLAPPAGE
-		spm_memory_free(SP_WHATEVER, seg_table[i].tag);
-#else
 		free(seg_table[i].storage);
-#endif
 		seg_table[i].storage=NULL;
 	}
 	return NULL;

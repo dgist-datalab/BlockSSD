@@ -18,6 +18,8 @@ void amf_error_call_back_r(void *req);
 void amf_error_call_back_w(void *req);
 void amf_error_call_back_e(void *req);
 
+char isused[NUM_TAGS];
+
 typedef struct dummy_req{
 	uint32_t test_ppa;
 	uint8_t type;
@@ -90,6 +92,8 @@ void* amf_info_destroy(lower_info *li){
 		fprintf(stderr,"%s %lu\n",bench_lower_type(i),li->req_type_cnt[i]);
 	}
 
+	fprintf(stderr,"write overlapped :%lu\n",li->write_overlapped);
+    fprintf(stderr,"read overlapped :%lu\n",li->read_overlapped);
     fprintf(stderr,"Total Read Traffic : %lu\n", li->req_type_cnt[1]+li->req_type_cnt[3]+li->req_type_cnt[5]+li->req_type_cnt[7]);
     fprintf(stderr,"Total Write Traffic: %lu\n\n", li->req_type_cnt[2]+li->req_type_cnt[4]+li->req_type_cnt[6]+li->req_type_cnt[8]);
     fprintf(stderr,"Total WAF: %.2f\n\n", (float)(li->req_type_cnt[2]+li->req_type_cnt[4]+li->req_type_cnt[6]+li->req_type_cnt[8]) / li->req_type_cnt[6]);
@@ -115,6 +119,11 @@ void* amf_info_write(uint32_t ppa, uint32_t size, value_set *value,bool async,al
 	}
 
 	req->test_ppa=ppa;
+    if(__atomic_load_n(&isused[ppa%NUM_TAGS],__ATOMIC_SEQ_CST)){
+        amf_info.write_overlapped++;
+    }
+    __atomic_fetch_add(&isused[req->test_ppa%NUM_TAGS], 1, __ATOMIC_SEQ_CST);
+
 	req->type_lower=0;
 #ifdef LOWER_MEM_DEV
 	memcpy(mem_pool[ppa], value->value, PAGESIZE);
@@ -133,6 +142,11 @@ void* amf_info_read(uint32_t ppa, uint32_t size, value_set *value,bool async,alg
 	}
 
 	req->test_ppa=ppa;
+    if(__atomic_load_n(&isused[ppa%NUM_TAGS],__ATOMIC_SEQ_CST)){
+        amf_info.read_overlapped++;
+    }
+    __atomic_fetch_add(&isused[req->test_ppa%NUM_TAGS], 1, __ATOMIC_SEQ_CST);
+
 
 	req->type_lower=0;
 #ifdef LOWER_MEM_DEV
@@ -180,10 +194,12 @@ void amf_flying_req_wait(){
 
 void amf_call_back_r(void *_req){
 	algo_req *req=(algo_req*)_req;
+	 __atomic_fetch_sub(&isused[req->test_ppa%NUM_TAGS], 1, __ATOMIC_SEQ_CST);
 	req->end_req(req);
 }
 void amf_call_back_w(void *_req){
 	algo_req *req=(algo_req*)_req;
+	 __atomic_fetch_sub(&isused[req->test_ppa%NUM_TAGS], 1, __ATOMIC_SEQ_CST);
 	req->end_req(req);
 }
 void amf_call_back_e(void *_req){
