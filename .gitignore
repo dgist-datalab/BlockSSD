@@ -21,6 +21,7 @@ robusta*
 driver
 range_driver
 *driver
+!libamfdriver
 *.swp
 ycsb*
 cscope*
